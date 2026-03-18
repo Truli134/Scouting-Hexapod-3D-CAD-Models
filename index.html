@@ -12,6 +12,33 @@
       --accent:       #58a6ff;
       --text:         #e6edf3;
       --text-muted:   #8b949e;
+      --hover:        rgba(255,255,255,0.04);
+      --active:       rgba(88,166,255,0.1);
+      --code-bg:      rgba(255,255,255,0.07);
+      --button-bg:    rgba(88,166,255,0.12);
+      --button-hover: rgba(88,166,255,0.2);
+      --scene-bg:     #0d1117;
+      --grid-major:   #21262d;
+      --grid-minor:   #21262d;
+      --badge-text:   #0d1117;
+    }
+
+    body[data-theme="light"] {
+      --bg:           #f3f6fb;
+      --surface:      #ffffff;
+      --border:       #d0dae6;
+      --accent:       #0f6cbd;
+      --text:         #17222d;
+      --text-muted:   #5d6b79;
+      --hover:        rgba(15,108,189,0.08);
+      --active:       rgba(15,108,189,0.14);
+      --code-bg:      rgba(23,34,45,0.08);
+      --button-bg:    rgba(15,108,189,0.12);
+      --button-hover: rgba(15,108,189,0.18);
+      --scene-bg:     #e8eef5;
+      --grid-major:   #b8c4d1;
+      --grid-minor:   #cfd8e3;
+      --badge-text:   #ffffff;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -38,7 +65,7 @@
     header h1 { font-size: 1.1rem; font-weight: 600; }
     .badge {
       background: var(--accent);
-      color: #0d1117;
+      color: var(--badge-text);
       font-size: 0.68rem;
       font-weight: 700;
       padding: 2px 8px;
@@ -57,6 +84,21 @@
       transition: color 0.15s;
     }
     .gh-link:hover { color: var(--text); }
+    .theme-toggle {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .theme-toggle:hover {
+      background: var(--hover);
+      border-color: var(--accent);
+    }
 
     /* ── Layout ──────────────────────────────────────────── */
     .layout {
@@ -97,9 +139,9 @@
       transition: background 0.12s;
       border-left: 2px solid transparent;
     }
-    .file-item:hover  { background: rgba(255,255,255,0.04); }
+    .file-item:hover  { background: var(--hover); }
     .file-item.active {
-      background: rgba(88,166,255,0.1);
+      background: var(--active);
       border-left-color: var(--accent);
     }
     .file-icon  { font-size: 1rem; flex-shrink: 0; }
@@ -113,7 +155,7 @@
       line-height: 1.65;
     }
     .empty-msg code {
-      background: rgba(255,255,255,0.07);
+      background: var(--code-bg);
       border-radius: 4px;
       padding: 1px 5px;
       font-size: 0.82em;
@@ -178,7 +220,7 @@
       color: var(--text);
       text-decoration: none;
       border: 1px solid var(--border);
-      background: rgba(88,166,255,0.12);
+      background: var(--button-bg);
       padding: 6px 10px;
       border-radius: 999px;
       font-size: 0.78rem;
@@ -186,7 +228,7 @@
       transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
     }
     .download-btn:hover {
-      background: rgba(88,166,255,0.2);
+      background: var(--button-hover);
       border-color: var(--accent);
     }
     .download-btn[aria-disabled="true"] {
@@ -207,6 +249,7 @@
 <header>
   <h1>🤖 Scouting Hexapod</h1>
   <span class="badge">3D Models</span>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Switch theme">Light Theme</button>
   <a class="gh-link"
      href="https://github.com/Truli134/Scouting-Hexapod-3D-CAD-Models"
      target="_blank" rel="noopener">
@@ -309,6 +352,8 @@ const prog     = document.getElementById('prog');
 const overlay  = document.getElementById('overlay');
 const curName  = document.getElementById('cur-name');
 const downloadBtn = document.getElementById('download-btn');
+const themeToggle = document.getElementById('theme-toggle');
+const mediaTheme = window.matchMedia('(prefers-color-scheme: light)');
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -317,7 +362,6 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d1117);
 
 // Grid floor
 const grid = new THREE.GridHelper(300, 50, 0x21262d, 0x21262d);
@@ -343,6 +387,71 @@ controls.enableDamping  = true;
 controls.dampingFactor  = 0.07;
 controls.autoRotate     = true;
 controls.autoRotateSpeed = 1.2;
+
+function getTheme() {
+  return document.body.dataset.theme || 'dark';
+}
+
+function applySceneTheme() {
+  const styles = getComputedStyle(document.body);
+  scene.background = new THREE.Color(styles.getPropertyValue('--scene-bg').trim());
+  grid.material.color.set(styles.getPropertyValue('--grid-major').trim());
+  grid.material.vertexColors = true;
+  grid.geometry.attributes.color.needsUpdate = true;
+
+  const major = new THREE.Color(styles.getPropertyValue('--grid-major').trim());
+  const minor = new THREE.Color(styles.getPropertyValue('--grid-minor').trim());
+  const colors = grid.geometry.attributes.color;
+
+  for (let index = 0; index < colors.count; index += 4) {
+    colors.setXYZ(index, major.r, major.g, major.b);
+    colors.setXYZ(index + 1, major.r, major.g, major.b);
+    colors.setXYZ(index + 2, minor.r, minor.g, minor.b);
+    colors.setXYZ(index + 3, minor.r, minor.g, minor.b);
+  }
+
+  colors.needsUpdate = true;
+
+  if (activeMesh) {
+    activeMesh.material.color.set(styles.getPropertyValue('--accent').trim());
+  }
+}
+
+function updateThemeToggleLabel() {
+  themeToggle.textContent = getTheme() === 'light' ? 'Dark Theme' : 'Light Theme';
+}
+
+function setTheme(theme, persist = true) {
+  document.body.dataset.theme = theme;
+  updateThemeToggleLabel();
+  applySceneTheme();
+
+  if (persist) {
+    localStorage.setItem('hexapod-theme', theme);
+  }
+}
+
+function getInitialTheme() {
+  const savedTheme = localStorage.getItem('hexapod-theme');
+  if (savedTheme === 'light' || savedTheme === 'dark') {
+    return savedTheme;
+  }
+
+  return mediaTheme.matches ? 'light' : 'dark';
+}
+
+themeToggle.addEventListener('click', () => {
+  const nextTheme = getTheme() === 'light' ? 'dark' : 'light';
+  setTheme(nextTheme);
+});
+
+mediaTheme.addEventListener('change', event => {
+  if (!localStorage.getItem('hexapod-theme')) {
+    setTheme(event.matches ? 'light' : 'dark', false);
+  }
+});
+
+setTheme(getInitialTheme(), false);
 
 // Resize renderer when container resizes
 new ResizeObserver(() => {
@@ -410,7 +519,7 @@ function loadModel(file) {
       bbox.getSize(size);
 
       const material = new THREE.MeshPhongMaterial({
-        color:     0x58a6ff,
+        color:     getComputedStyle(document.body).getPropertyValue('--accent').trim(),
         specular:  0x112244,
         shininess: 55,
         side: THREE.DoubleSide,
