@@ -362,6 +362,7 @@ renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 wrap.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
+let activeMesh = null;
 
 // Grid floor
 const grid = new THREE.GridHelper(300, 50, 0x21262d, 0x21262d);
@@ -403,11 +404,10 @@ function applySceneTheme() {
   const minor = new THREE.Color(styles.getPropertyValue('--grid-minor').trim());
   const colors = grid.geometry.attributes.color;
 
-  for (let index = 0; index < colors.count; index += 4) {
-    colors.setXYZ(index, major.r, major.g, major.b);
-    colors.setXYZ(index + 1, major.r, major.g, major.b);
-    colors.setXYZ(index + 2, minor.r, minor.g, minor.b);
-    colors.setXYZ(index + 3, minor.r, minor.g, minor.b);
+  for (let index = 0; index < colors.count; index++) {
+    const useMajor = index % 4 < 2;
+    const color = useMajor ? major : minor;
+    colors.setXYZ(index, color.r, color.g, color.b);
   }
 
   colors.needsUpdate = true;
@@ -465,7 +465,6 @@ new ResizeObserver(() => {
 (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
 
 /* ── Model loading ───────────────────────────────────────── */
-let activeMesh = null;
 const loader   = new STLLoader();
 
 function showOverlay(html) {
