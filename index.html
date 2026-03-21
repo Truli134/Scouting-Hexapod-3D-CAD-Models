@@ -269,13 +269,14 @@
 import * as THREE               from 'three';
 import { STLLoader }            from 'three/addons/loaders/STLLoader.js';
 import { OrbitControls }        from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }           from 'three/addons/loaders/GLTFLoader.js';
 
 /* ── Config ──────────────────────────────────────────────── */
 const REPO   = 'Truli134/Scouting-Hexapod-3D-CAD-Models';
 const BRANCH = 'main';
 
-/* ── GitHub API: list every .stl in the repo ─────────────── */
-async function fetchSTLFiles() {
+/* ── GitHub API: list every supported model in the repo ───── */
+async function fetchModelFiles() {
   try {
     const res = await fetch(
       `https://api.github.com/repos/${REPO}/git/trees/${BRANCH}?recursive=1`
@@ -283,13 +284,19 @@ async function fetchSTLFiles() {
     if (!res.ok) throw new Error(`GitHub API returned ${res.status}`);
     const data = await res.json();
     if (data.truncated) console.warn('Repo tree truncated – some files may be missing.');
+    const supportedExt = ['.stl', '.gltf', '.glb'];
     return data.tree
-      .filter(f => f.type === 'blob' && f.path.toLowerCase().endsWith('.stl'))
+      .filter(f => {
+        if (f.type !== 'blob') return false;
+        const lower = f.path.toLowerCase();
+        return supportedExt.some(ext => lower.endsWith(ext));
+      })
       .map(f => ({
         path: f.path,
-        name: f.path.split('/').pop().replace(/\.stl$/i, '').replace(/[_-]+/g, ' '),
+        name: f.path.split('/').pop().replace(/\.(stl|gltf|glb)$/i, '').replace(/[_-]+/g, ' '),
         url:  `https://raw.githubusercontent.com/${REPO}/${BRANCH}/${encodeURIComponent(f.path).replace(/%2F/g, '/')}`,
         size: f.size,
+        ext: f.path.split('.').pop().toLowerCase(),
       }));
   } catch (err) {
     console.error('Could not fetch file list:', err);
@@ -356,8 +363,41 @@ new ResizeObserver(() => {
 (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
 
 /* ── Model loading ───────────────────────────────────────── */
-let activeMesh = null;
-const loader   = new STLLoader();
+let activeModel = null;
+const stlLoader  = new STLLoader();
+const gltfLoader = new GLTFLoader();
+
+function disposeObject3D(root) {
+  root.traverse((obj) => {
+    if (!obj.isMesh) return;
+    if (obj.geometry) obj.geometry.dispose();
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    mats.forEach((mat) => { if (mat) mat.dispose(); });
+  });
+}
+
+function placeAndFrameModel(object3d) {
+  const bbox = new THREE.Box3().setFromObject(object3d);
+  const center = bbox.getCenter(new THREE.Vector3());
+  const size = bbox.getSize(new THREE.Vector3());
+
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  const s = 8 / maxDim;
+  object3d.scale.setScalar(s);
+
+  const scaledBox = new THREE.Box3().setFromObject(object3d);
+  const scaledCenter = scaledBox.getCenter(new THREE.Vector3());
+  const scaledSize = scaledBox.getSize(new THREE.Vector3());
+
+  object3d.position.x -= scaledCenter.x;
+  object3d.position.y -= scaledBox.min.y;
+  object3d.position.z -= scaledCenter.z;
+
+  const dist = Math.max(8 * 1.8, scaledSize.length() * 0.8);
+  camera.position.set(dist, dist * 0.6, dist);
+  controls.target.set(0, scaledSize.y * 0.45, 0);
+  controls.update();
+}
 
 function showOverlay(html) {
   overlay.innerHTML = `<div class="ol-box">${html}</div>`;
@@ -383,11 +423,10 @@ function updateDownloadButton(file) {
 
 function loadModel(file) {
   // Dispose previous
-  if (activeMesh) {
-    scene.remove(activeMesh);
-    activeMesh.geometry.dispose();
-    activeMesh.material.dispose();
-    activeMesh = null;
+  if (activeModel) {
+    scene.remove(activeModel);
+    disposeObject3D(activeModel);
+    activeModel = null;
   }
 
   curName.textContent = file.name;
@@ -395,63 +434,67 @@ function loadModel(file) {
   setProgress(20);
   showOverlay('<h2>Loading…</h2><p>' + fmtSize(file.size) + '</p>');
 
-  loader.load(
+  const onProgress = (xhr) => {
+    if (xhr.total) setProgress(20 + (xhr.loaded / xhr.total) * 70);
+  };
+
+  const onError = (err) => {
+    setProgress(0);
+    showOverlay('<h2>⚠️ Failed to load</h2><p>Could not fetch this file.</p>');
+    console.error(err);
+  };
+
+  if (file.ext === 'stl') {
+    stlLoader.load(
+      file.url,
+      /* onLoad */ (geo) => {
+        setProgress(95);
+        geo.computeVertexNormals();
+
+        const material = new THREE.MeshPhongMaterial({
+          color:     0x58a6ff,
+          specular:  0x112244,
+          shininess: 55,
+          side: THREE.DoubleSide,
+        });
+
+        activeModel = new THREE.Mesh(geo, material);
+        activeModel.castShadow = true;
+        activeModel.receiveShadow = true;
+        scene.add(activeModel);
+        placeAndFrameModel(activeModel);
+
+        setProgress(100);
+        setTimeout(() => setProgress(0), 350);
+        hideOverlay();
+      },
+      /* onProgress */ onProgress,
+      /* onError */ onError
+    );
+    return;
+  }
+
+  gltfLoader.load(
     file.url,
-    /* onLoad */ (geo) => {
+    /* onLoad */ (gltf) => {
       setProgress(95);
-      geo.computeVertexNormals();
 
-      // Center geometry at origin
-      geo.computeBoundingBox();
-      const bbox   = geo.boundingBox;
-      const center = new THREE.Vector3();
-      bbox.getCenter(center);
-      const size   = new THREE.Vector3();
-      bbox.getSize(size);
-
-      const material = new THREE.MeshPhongMaterial({
-        color:     0x58a6ff,
-        specular:  0x112244,
-        shininess: 55,
-        side: THREE.DoubleSide,
+      activeModel = gltf.scene;
+      activeModel.traverse((obj) => {
+        if (!obj.isMesh) return;
+        obj.castShadow = true;
+        obj.receiveShadow = true;
       });
 
-      activeMesh = new THREE.Mesh(geo, material);
-      activeMesh.castShadow    = true;
-      activeMesh.receiveShadow = true;
-
-      // Scale so longest axis = 8 units
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const s = 8 / maxDim;
-      activeMesh.scale.setScalar(s);
-
-      // Move so bottom of model sits on the grid (y = 0)
-      activeMesh.position.set(
-        -center.x * s,
-        -bbox.min.y * s,
-        -center.z * s
-      );
-
-      scene.add(activeMesh);
-
-      // Point camera at model
-      const dist = 8 * 1.8;
-      camera.position.set(dist, dist * 0.6, dist);
-      controls.target.set(0, 4, 0);
-      controls.update();
+      scene.add(activeModel);
+      placeAndFrameModel(activeModel);
 
       setProgress(100);
       setTimeout(() => setProgress(0), 350);
       hideOverlay();
     },
-    /* onProgress */ (xhr) => {
-      if (xhr.total) setProgress(20 + (xhr.loaded / xhr.total) * 70);
-    },
-    /* onError */ (err) => {
-      setProgress(0);
-      showOverlay('<h2>⚠️ Failed to load</h2><p>Could not fetch this file.</p>');
-      console.error(err);
-    }
+    /* onProgress */ onProgress,
+    /* onError */ onError
   );
 }
 
@@ -470,8 +513,8 @@ function buildList(files) {
 
   if (files.length === 0) {
     listEl.innerHTML = `<div class="empty-msg">
-      No <code>.stl</code> files found yet.<br><br>
-      Add STL files to the repo and they will appear here automatically.
+      No supported model files found yet.<br><br>
+      Add <code>.stl</code>, <code>.gltf</code>, or <code>.glb</code> files to the repo.
     </div>`;
     return;
   }
@@ -484,8 +527,9 @@ function buildList(files) {
     const el = document.createElement('div');
     el.className = 'file-item';
     el.title     = file.path;
+    const icon = file.ext === 'stl' ? '⬡' : '◈';
     el.innerHTML = `
-      <span class="file-icon">⬡</span>
+      <span class="file-icon">${icon}</span>
       <span class="file-name">${file.name}</span>
       <span class="file-size">${fmtSize(file.size)}</span>`;
 
@@ -508,7 +552,7 @@ function buildList(files) {
 }
 
 /* ── Boot ────────────────────────────────────────────────── */
-fetchSTLFiles().then(buildList);
+fetchModelFiles().then(buildList);
 </script>
 </body>
 </html>
